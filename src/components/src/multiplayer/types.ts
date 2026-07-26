@@ -1,6 +1,6 @@
 import { BoardTile, FoodType, LevelConfig } from '../types/game';
 
-export type RoomStatus = 'lobby' | 'playing' | 'won' | 'lost';
+export type RoomStatus = 'playing' | 'won' | 'lost';
 
 export interface RoomPlayer {
   id: string;
@@ -9,7 +9,7 @@ export interface RoomPlayer {
 }
 
 export interface RoomState {
-  code: string;
+  channelKey: string;
   hostId: string | null;
   players: RoomPlayer[];
   maxPlayers: number;
@@ -23,18 +23,15 @@ export interface RoomState {
   matches: number;
   moves: number;
   lastMatchType: FoodType | null;
+  /** ms epoch timestamp the table will auto-advance at (won -> next level,
+   * lost -> retry), or null while still in play. */
+  advanceAt: number | null;
 }
 
-export interface CreateRoomAck {
+export interface JoinTableAck {
   ok: boolean;
   room?: RoomState;
   selfId?: string;
-  error?: string;
-}
-
-export interface JoinRoomAck {
-  ok: boolean;
-  room?: RoomState;
-  selfId?: string;
+  joinedInProgress?: boolean;
   error?: string;
 }

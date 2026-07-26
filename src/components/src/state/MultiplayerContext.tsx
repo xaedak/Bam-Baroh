@@ -1,13 +1,18 @@
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { Socket } from 'socket.io-client';
 import { getSocket, getStoredServerUrl, setStoredServerUrl } from '../multiplayer/socket';
-import { CreateRoomAck, JoinRoomAck, RoomState } from '../multiplayer/types';
+import { JoinTableAck, RoomState } from '../multiplayer/types';
 
 export interface RemoteAchievementEvent {
   key: string;
   playerName: string;
   title: string;
   icon: string;
+}
+
+export interface RemoteDrag {
+  playerId: string;
+  playerName: string;
 }
 
 interface MultiplayerContextValue {
@@ -18,19 +23,31 @@ interface MultiplayerContextValue {
   selfId: string | null;
   error: string | null;
   isHost: boolean;
-  /** True if the most recent room:join landed in a room whose game was
-   * already underway (rather than still in the lobby) - drives the
-   * "Helping Hand" achievement. */
+  /** True if the most recent table:join landed at a table whose level was
+   * already underway (rather than freshly created) - drives the
+   * "Helping Hand" achievement and the "you joined mid-game" toast. */
   joinedInProgress: boolean;
   clearError: () => void;
-  createRoom: (name: string, level: number, token?: string | null) => Promise<boolean>;
-  joinRoom: (code: string, name: string, token?: string | null) => Promise<boolean>;
-  leaveRoom: () => void;
-  startGame: (level?: number) => void;
+  /**
+   * The one and only way to play: joins (creating if necessary) the single
+   * persistent table for `channelKey` - normally the current Discord
+   * Activity instance id, so everyone in the same voice/text channel lands
+   * on the same table automatically. No code, no invite link, no separate
+   * create-vs-join choice.
+   */
+  joinTable: (channelKey: string, name: string, token?: string | null) => Promise<boolean>;
+  leaveTable: () => void;
+  /** Skips the auto-advance countdown and jumps to the next level / retry immediately. Any player at the table can call this - there's no host gate on it. */
   restartGame: () => void;
   kickPlayer: (playerId: string) => void;
   clickTile: (tileId: string) => void;
-  /** Tell everyone else currently in the room that an achievement unlocked. */
+  /** Tell everyone else at the table a tile is being picked up/dropped, for
+   * real-time "someone is holding this tile" visuals - never touches game
+   * state on its own. */
+  broadcastTileDrag: (tileId: string, active: boolean) => void;
+  /** tileId -> who is currently holding it, from other players only. */
+  remoteDrags: Record<string, RemoteDrag>;
+  /** Tell everyone else currently at the table that an achievement unlocked. */
   announceAchievement: (title: string, icon: string, playerName: string) => void;
   remoteAchievements: RemoteAchievementEvent[];
   dismissRemoteAchievement: (key: string) => void;
@@ -46,6 +63,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   const [error, setError] = useState<string | null>(null);
   const [joinedInProgress, setJoinedInProgress] = useState(false);
   const [remoteAchievements, setRemoteAchievements] = useState<RemoteAchievementEvent[]>([]);
+  const [remoteDrags, setRemoteDrags] = useState<Record<string, RemoteDrag>>({});
   const socketRef = useRef<Socket | null>(null);
 
   const setServerUrl = useCallback((url: string) => {
@@ -59,15 +77,16 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     const s = getSocket(serverUrlState);
     if (socketRef.current !== s) {
       socketRef.current = s;
-      s.off('room:state');
-      s.off('room:kicked');
+      s.off('table:state');
+      s.off('table:kicked');
       s.off('disconnect');
       s.off('achievement:announce');
-      s.on('room:state', (next: RoomState) => setRoom(next));
-      s.on('room:kicked', () => {
+      s.off('tile:drag');
+      s.on('table:state', (next: RoomState) => setRoom(next));
+      s.on('table:kicked', () => {
         setRoom(null);
         setSelfId(null);
-        setError('You were removed from the room by the host.');
+        setError('You were removed from the table by the host.');
       });
       s.on('disconnect', () => {
         setConnecting(false);
@@ -83,13 +102,28 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           },
         ]);
       });
+      s.on(
+        'tile:drag',
+        (payload: { tileId?: string; active?: boolean; playerId?: string; playerName?: string }) => {
+          if (!payload.tileId) return;
+          setRemoteDrags((prev) => {
+            const next = { ...prev };
+            if (payload.active) {
+              next[payload.tileId!] = { playerId: payload.playerId ?? '', playerName: payload.playerName || 'Player' };
+            } else {
+              delete next[payload.tileId!];
+            }
+            return next;
+          });
+        }
+      );
     }
     if (!s.connected) s.connect();
     return s;
   }, [serverUrlState]);
 
-  const createRoom = useCallback(
-    (name: string, level: number, token?: string | null) =>
+  const joinTable = useCallback(
+    (channelKey: string, name: string, token?: string | null) =>
       new Promise<boolean>((resolve) => {
         setConnecting(true);
         setError(null);
@@ -100,15 +134,16 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           resolve(false);
         };
         s.once('connect_error', onConnectError);
-        s.emit('room:create', { name, level, token }, (ack: CreateRoomAck) => {
+        s.emit('table:join', { channelKey, name, token }, (ack: JoinTableAck) => {
           s.off('connect_error', onConnectError);
           setConnecting(false);
           if (ack.ok && ack.room) {
             setRoom(ack.room);
             setSelfId(ack.selfId ?? s.id ?? null);
+            setJoinedInProgress(!!ack.joinedInProgress);
             resolve(true);
           } else {
-            setError(ack.error ?? 'Could not create room.');
+            setError(ack.error ?? 'Could not join the table.');
             resolve(false);
           }
         });
@@ -116,55 +151,27 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     [ensureSocket, serverUrlState]
   );
 
-  const joinRoom = useCallback(
-    (code: string, name: string, token?: string | null) =>
-      new Promise<boolean>((resolve) => {
-        setConnecting(true);
-        setError(null);
-        const s = ensureSocket();
-        const onConnectError = () => {
-          setConnecting(false);
-          setError(`Couldn't reach the multiplayer server at ${serverUrlState}.`);
-          resolve(false);
-        };
-        s.once('connect_error', onConnectError);
-        s.emit('room:join', { code: code.trim().toUpperCase(), name, token }, (ack: JoinRoomAck) => {
-          s.off('connect_error', onConnectError);
-          setConnecting(false);
-          if (ack.ok && ack.room) {
-            setRoom(ack.room);
-            setSelfId(ack.selfId ?? s.id ?? null);
-            setJoinedInProgress(ack.room.status !== 'lobby');
-            resolve(true);
-          } else {
-            setError(ack.error ?? 'Could not join room.');
-            resolve(false);
-          }
-        });
-      }),
-    [ensureSocket, serverUrlState]
-  );
-
-  const leaveRoom = useCallback(() => {
-    socketRef.current?.emit('room:leave');
+  const leaveTable = useCallback(() => {
+    socketRef.current?.emit('table:leave');
     setRoom(null);
     setSelfId(null);
-  }, []);
-
-  const startGame = useCallback((level?: number) => {
-    socketRef.current?.emit('room:start', { level });
+    setRemoteDrags({});
   }, []);
 
   const restartGame = useCallback(() => {
-    socketRef.current?.emit('room:restart');
+    socketRef.current?.emit('table:restart');
   }, []);
 
   const kickPlayer = useCallback((playerId: string) => {
-    socketRef.current?.emit('room:kick', { playerId });
+    socketRef.current?.emit('table:kick', { playerId });
   }, []);
 
   const clickTile = useCallback((tileId: string) => {
     socketRef.current?.emit('tile:click', { tileId });
+  }, []);
+
+  const broadcastTileDrag = useCallback((tileId: string, active: boolean) => {
+    socketRef.current?.emit('tile:drag', { tileId, active });
   }, []);
 
   const announceAchievement = useCallback((title: string, icon: string, playerName: string) => {
@@ -190,13 +197,13 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       isHost,
       joinedInProgress,
       clearError,
-      createRoom,
-      joinRoom,
-      leaveRoom,
-      startGame,
+      joinTable,
+      leaveTable,
       restartGame,
       kickPlayer,
       clickTile,
+      broadcastTileDrag,
+      remoteDrags,
       announceAchievement,
       remoteAchievements,
       dismissRemoteAchievement,
@@ -211,13 +218,13 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       isHost,
       joinedInProgress,
       clearError,
-      createRoom,
-      joinRoom,
-      leaveRoom,
-      startGame,
+      joinTable,
+      leaveTable,
       restartGame,
       kickPlayer,
       clickTile,
+      broadcastTileDrag,
+      remoteDrags,
       announceAchievement,
       remoteAchievements,
       dismissRemoteAchievement,

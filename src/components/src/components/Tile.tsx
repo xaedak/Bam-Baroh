@@ -1,46 +1,61 @@
 import React from 'react';
-import { BoardTile, FOOD_META } from '../types/game';
+import { BoardTile, FOOD_META, POWERUP_META } from '../types/game';
 
 interface TileProps {
   tile: BoardTile;
   covered: boolean;
   cols: number;
   rows: number;
-  onClick: (id: string) => void;
+  dragging?: boolean;
   hinted?: boolean;
-  registerRef?: (id: string, el: HTMLButtonElement | null) => void;
+  onPickUp: (id: string, clientX: number, clientY: number) => void;
+  registerRef?: (id: string, el: HTMLDivElement | null) => void;
 }
 
 export const Tile: React.FC<TileProps> = React.memo(
-  ({ tile, covered, cols, rows, onClick, hinted, registerRef }) => {
+  ({ tile, covered, cols, rows, dragging, hinted, onPickUp, registerRef }) => {
     const meta = FOOD_META[tile.type];
+    const powerupMeta = tile.powerup ? POWERUP_META[tile.powerup] : null;
     const cellW = 100 / cols;
     const cellH = 100 / rows;
-    // Each layer cascades up-and-to-the-left of the one beneath it, like a
-    // physical stack of tiles — deep enough to clearly read as "this tile is
-    // sitting on top of others", with the shadow growing at the same time so
-    // higher layers visibly lift off the ones underneath.
-    const layerOffset = tile.layer * 7;
+
+    // Classic mahjong solitaire stacking: each layer steps visibly up and to
+    // the side of the one beneath it (not a subtle 1-2px hint) so the tile
+    // underneath always peeks out - you can always tell there's more buried
+    // in a pile without having to dig first. Shadow deepens with it so
+    // higher layers read as physically lifted off the board.
+    const layerOffsetX = tile.layer * 11;
+    const layerOffsetY = tile.layer * 9;
     const shadowDepth = 3 + tile.layer * 2.5;
 
+    const color = powerupMeta ? powerupMeta.color : meta.color;
+    const emoji = powerupMeta ? powerupMeta.emoji : meta.emoji;
+    const label = powerupMeta ? `${powerupMeta.label} powerup` : meta.label;
+
     return (
-      <button
-        type="button"
+      <div
         ref={(el) => registerRef?.(tile.id, el)}
-        aria-label={covered ? `${meta.label} tile (covered)` : `${meta.label} tile`}
-        disabled={covered}
-        onClick={() => onClick(tile.id)}
+        role="button"
+        tabIndex={covered ? -1 : 0}
+        aria-label={covered ? `${label} tile (covered)` : `${label} tile`}
+        aria-disabled={covered}
+        onPointerDown={(e) => {
+          if (covered) return;
+          onPickUp(tile.id, e.clientX, e.clientY);
+        }}
         style={{
           position: 'absolute',
-          left: `calc(${tile.col * cellW}% - ${layerOffset}px)`,
-          top: `calc(${tile.row * cellH}% - ${layerOffset}px)`,
+          left: `calc(${tile.col * cellW}% - ${layerOffsetX}px)`,
+          top: `calc(${tile.row * cellH}% - ${layerOffsetY}px)`,
           width: `${cellW}%`,
           height: `${cellH}%`,
           zIndex: 10 + tile.layer,
+          touchAction: 'none',
+          opacity: dragging ? 0 : 1,
         }}
         className={[
-          'p-[3px] sm:p-1 transition-transform duration-150 ease-out',
-          covered ? 'cursor-not-allowed' : 'cursor-pointer active:scale-90 hover:-translate-y-0.5',
+          'p-[3px] sm:p-1 transition-transform duration-150 ease-out select-none',
+          covered ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5',
         ].join(' ')}
       >
         <div
@@ -50,22 +65,21 @@ export const Tile: React.FC<TileProps> = React.memo(
             covered
               ? 'brightness-[0.55] saturate-50 border-black/30'
               : 'border-white/40 dark:border-white/20',
+            powerupMeta && !covered ? 'ring-2 ring-white/80' : '',
             hinted && !covered ? 'animate-hintPulse ring-4 ring-marigold-400' : '',
           ].join(' ')}
           style={{
-            background: covered
-              ? '#3a3a3a'
-              : `linear-gradient(155deg, ${meta.color}, ${meta.color}cc)`,
+            background: covered ? '#3a3a3a' : `linear-gradient(155deg, ${color}, ${color}cc)`,
             boxShadow: covered
               ? `0 ${shadowDepth}px 0 rgba(0,0,0,0.35), 0 ${shadowDepth + 4}px ${shadowDepth + 6}px -4px rgba(0,0,0,0.5)`
               : `0 ${shadowDepth}px 0 rgba(0,0,0,0.3), 0 ${shadowDepth + 6}px ${shadowDepth + 10}px -4px rgba(0,0,0,0.55)`,
           }}
         >
           <span className="drop-shadow-sm" aria-hidden="true">
-            {meta.emoji}
+            {emoji}
           </span>
         </div>
-      </button>
+      </div>
     );
   }
 );

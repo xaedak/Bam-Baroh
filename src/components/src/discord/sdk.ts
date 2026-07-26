@@ -17,14 +17,26 @@
 //      its Application ID.
 //   3. Set DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET on the *server*
 ///     (server/.env or your host's env vars) to the same app's ID/secret.
-//   4. Under Activities -> URL Mappings, map your root URL to wherever
-//      this app is deployed, per Discord's Activities docs.
+//   4. Under Activities -> URL Mappings, map your root URL ("/") to
+//      wherever this client is deployed, per Discord's Activities docs.
+//   5. ALSO under URL Mappings, add a second mapping (e.g. prefix
+//      "/proxy-server") pointing at the multiplayer server's host (no
+//      protocol, just the domain, e.g. `bam-baroh.onrender.com`). Discord
+//      blocks every direct request to an external domain from inside the
+//      Activity iframe - REST calls and the Socket.IO connection both have
+//      to go through this mapped proxy path instead (see
+//      `discord/network.ts`, `multiplayer/api.ts`, `multiplayer/socket.ts`).
+//      If VITE_DISCORD_PROXY_PREFIX isn't set, the client assumes
+//      "/proxy-server" - keep the Portal mapping and the env var in sync.
 //
 // This can only be exercised for real inside the Discord client itself —
 // it cannot be tested from a plain browser tab or from this sandbox.
 
 import type { Profile } from '../multiplayer/api';
 import { loginWithDiscord } from '../multiplayer/api';
+import { isDiscordActivity } from './network';
+
+export { isDiscordActivity };
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID as string | undefined;
 
@@ -34,11 +46,19 @@ export interface DiscordAuthResult {
   save: unknown | null;
 }
 
-/** True when we appear to be running inside the Discord client as an Activity. */
-export function isDiscordActivity(): boolean {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  return params.has('frame_id') || window.location.hostname.endsWith('.discordsays.com');
+/**
+ * The Discord Activity "instance" is unique per launch of the Activity in a
+ * given channel — everyone who opens it from the same voice/text channel at
+ * the same time shares the same instanceId. That's the entire join
+ * mechanism this game uses: no room codes, no invite links, just "are you
+ * in the same Discord channel as me right now". Falls back to a fixed key
+ * outside Discord (plain browser tab) so local dev/testing still has a
+ * single shared table to connect to.
+ */
+let activityChannelKey: string | null = null;
+
+export function getActivityChannelKey(): string {
+  return activityChannelKey ?? 'web-default-table';
 }
 
 let sdkPromise: Promise<DiscordAuthResult | null> | null = null;
@@ -71,6 +91,11 @@ async function runDiscordHandshake(clientId: string): Promise<DiscordAuthResult 
   const { DiscordSDK } = await import('@discord/embedded-app-sdk');
   const discordSdk = new DiscordSDK(clientId);
   await discordSdk.ready();
+
+  // instanceId is stable for everyone who opened this Activity from the
+  // same channel at the same time - this alone is the "same lobby" the
+  // player is asking for, no code or link required.
+  activityChannelKey = `discord:${discordSdk.instanceId}`;
 
   const { code } = await discordSdk.commands.authorize({
     client_id: clientId,

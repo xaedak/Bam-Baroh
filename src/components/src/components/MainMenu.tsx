@@ -1,35 +1,36 @@
 import React, { useMemo } from 'react';
 import { useSave } from '../state/SaveContext';
 import { useAuth } from '../state/AuthContext';
-import { TOTAL_LEVELS } from '../data/levels';
 import { useAudio } from '../hooks/useAudio';
 import { FloatingFoods } from './FloatingFoods';
-import { LevelPath } from './LevelPath';
 
 interface MainMenuProps {
-  onPlay: (level: number) => void;
+  onPlay: () => void;
   onSettings: () => void;
   onTutorial: () => void;
-  onMultiplayer: () => void;
   onAccount: () => void;
   onLeaderboard: () => void;
   onAchievements: () => void;
   onStatistics: () => void;
   onDaily: () => void;
   onLegal: () => void;
+  /** The shared table's current level, once known - null while still connecting. */
+  tableLevel: number | null;
+  tablePlayerCount: number | null;
 }
 
 export const MainMenu: React.FC<MainMenuProps> = ({
   onPlay,
   onSettings,
   onTutorial,
-  onMultiplayer,
   onAccount,
   onLeaderboard,
   onAchievements,
   onStatistics,
   onDaily,
   onLegal,
+  tableLevel,
+  tablePlayerCount,
 }) => {
   const { save } = useSave();
   const { profile } = useAuth();
@@ -70,13 +71,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           className="font-body text-cream-200/70 text-sm sm:text-base mt-2 text-center max-w-xs animate-fadeUp"
           style={{ animationDelay: '150ms' }}
         >
-          Clear the night market plate — match three of a kind before your tray fills up.
+          Clear the shared night market plate together — match three of a kind before the tray fills up.
         </p>
         <p
           className="font-mono text-cream-200/40 text-[11px] mt-1 text-center animate-fadeUp"
           style={{ animationDelay: '250ms' }}
         >
-          Endless procedurally generated levels — the feast never runs out.
+          One table per Discord channel, always on — jump in any time, mid-level or not.
         </p>
         <button
           onClick={onDaily}
@@ -90,9 +91,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </button>
       </div>
 
-      <div className="relative z-10 flex justify-center px-4 mb-4 animate-fadeUp" style={{ animationDelay: '380ms' }}>
+      <div className="relative z-10 flex flex-col items-center px-4 mb-4 animate-fadeUp" style={{ animationDelay: '380ms' }}>
         <button
-          onClick={() => onPlay(Math.min(save.unlockedLevel, TOTAL_LEVELS))}
+          onClick={onPlay}
           className={[
             'relative rounded-full font-display text-lg px-9 py-3.5 shadow-signboard active:scale-95',
             'transition-all hover:-translate-y-0.5 hover:shadow-tileup',
@@ -100,15 +101,19 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             'bg-[length:200%_100%] hover:animate-shimmer',
           ].join(' ')}
         >
-          {save.unlockedLevel > 1 ? `Continue · Lv ${save.unlockedLevel}` : '▶ Play'}
+          {tableLevel ? `▶ Join Table · Lv ${tableLevel}` : '▶ Join Table'}
         </button>
+        {tablePlayerCount !== null && (
+          <p className="mt-2 font-mono text-[11px] text-cream-200/50">
+            👥 {tablePlayerCount} player{tablePlayerCount === 1 ? '' : 's'} at the table right now
+          </p>
+        )}
       </div>
 
       <div
         className="relative z-10 flex justify-center gap-2.5 px-4 mb-5 flex-wrap animate-fadeUp"
         style={{ animationDelay: '440ms' }}
       >
-        <MenuChip icon="🎮" label="Multiplayer" onClick={onMultiplayer} accentClass="border-betel-500/50 hover:bg-betel-500/10" />
         <MenuChip
           icon="👤"
           label={profile ? profile.username : 'Account'}
@@ -127,11 +132,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <MenuChip icon="⚙️" label="Settings" onClick={onSettings} />
       </div>
 
-      <div className="relative z-10 flex-1 min-h-0 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">
-        <div className="max-w-md mx-auto h-full rounded-3xl bg-dusk-700/30 border border-cream-100/10 p-3 sm:p-4 flex flex-col min-h-0 backdrop-blur-sm shadow-tile">
-          <LevelPath unlockedLevel={save.unlockedLevel} levelStars={save.levelStars} onPlay={onPlay} />
-        </div>
-      </div>
+      <div className="relative z-10 flex-1" />
 
       <div className="relative z-10 flex flex-col items-center gap-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] px-4">
         <div className="flex items-center gap-3 font-mono text-[11px] text-cream-200/40">

@@ -23,6 +23,7 @@ const DEFAULT_STATS: StatsData = {
   multiplayerGamesPlayed: 0,
   porkTilesMatched: 0,
   joinedInProgressGames: 0,
+  powerupsUsed: 0,
 };
 
 const DEFAULT_DAILY: DailyRewardState = {

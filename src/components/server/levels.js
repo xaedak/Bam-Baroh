@@ -1,12 +1,31 @@
 // Ported from ../src/data/levels.ts (getLevelConfig, generateBoard,
 // isTileCovered only - multiplayer rooms don't need hint/magic-solve).
-// Kept byte-for-byte equivalent in logic so a given level number produces
-// the exact same board as single-player would.
+// Kept in sync with the client generator so a given level number produces
+// the exact same board (including powerup placement) as single-player would.
 import { mulberry32, seedFromLevel, shuffleWithRng } from './rng.js';
 
-export const ALL_FOOD_TYPES = ['pork', 'fish', 'chicken', 'rice', 'pitha'];
+export const ALL_FOOD_TYPES = [
+  'pork',
+  'fish',
+  'chicken',
+  'rice',
+  'pitha',
+  'mango',
+  'banana',
+  'jackfruit',
+  'lychee',
+  'pineapple',
+  'watermelon',
+  'eggplant',
+  'pumpkin',
+  'chili',
+  'okra',
+  'corn',
+];
+export const POWERUP_KINDS = ['wild', 'bomb', 'freeze'];
 export const TOTAL_LEVELS = 999_999;
-export const TRAY_SIZE = 7;
+// Kept in lockstep with TRAY_SIZE in src/data/levels.ts.
+export const TRAY_SIZE = 4;
 const DIFFICULTY_RAMP = 260;
 
 function difficultyProgress(level) {
@@ -18,14 +37,15 @@ export function getLevelConfig(level) {
   const progress = difficultyProgress(clamped);
   const overtime = Math.log10(1 + clamped / 1000);
 
-  const rows = Math.min(9, 5 + Math.floor(progress * 4.2));
-  const cols = Math.min(11, 6 + Math.floor(progress * 5.2));
+  const rows = Math.min(9, 6 + Math.floor(progress * 3.2));
+  const cols = Math.min(11, 7 + Math.floor(progress * 4.2));
   // "layers" is the max height a single stack of tiles can be piled to on
   // one board cell - every tile may have others buried underneath it that
-  // are untouchable until it's cleared.
-  const layers = Math.min(8, 2 + Math.floor(progress * 7.5));
+  // are untouchable until it's cleared. Starts at 3 so there's real digging
+  // from level 1.
+  const layers = Math.min(9, 3 + Math.floor(progress * 7));
 
-  const typeCount = Math.min(5, 3 + Math.floor(progress * 3));
+  const typeCount = Math.min(ALL_FOOD_TYPES.length, 6 + Math.floor(progress * (ALL_FOOD_TYPES.length - 6)));
   const tileTypes = ALL_FOOD_TYPES.slice(0, typeCount);
 
   // Physical number of tile slots: every cell can hold up to `layers` tiles.
@@ -38,6 +58,8 @@ export function getLevelConfig(level) {
   let totalTiles = Math.min(desired, maxByCapacity);
   totalTiles = Math.max(totalTiles, 18);
 
+  const powerupCount = Math.min(6, 1 + Math.floor(progress * 5));
+
   return {
     level: clamped,
     rows,
@@ -49,6 +71,7 @@ export function getLevelConfig(level) {
     // Multiplayer co-op rooms run without a countdown timer for now -
     // players clear the shared board together at their own pace.
     timeLimitSeconds: null,
+    powerupCount,
   };
 }
 
@@ -135,7 +158,32 @@ export function generateBoard(config) {
     removed: false,
   }));
 
-  return tiles;
+  // Layer a handful of powerup tiles directly on top of existing stacks -
+  // always already uncovered, mirroring src/data/levels.ts exactly so the
+  // client and server boards match tile-for-tile.
+  const stackTops = new Map();
+  for (const cell of chosenCells) {
+    const k = `${cell.row},${cell.col}`;
+    const existing = stackTops.get(k);
+    if (!existing || cell.layer > existing.layer) stackTops.set(k, cell);
+  }
+  const candidateCells = shuffleWithRng(Array.from(stackTops.values()), rng);
+  const powerupTiles = [];
+  for (let i = 0; i < Math.min(config.powerupCount, candidateCells.length); i++) {
+    const cell = candidateCells[i];
+    const kind = POWERUP_KINDS[Math.floor(rng() * POWERUP_KINDS.length)];
+    powerupTiles.push({
+      id: `L${config.level}-pw-${cell.row}-${cell.col}-${i}`,
+      type: types[Math.floor(rng() * types.length)],
+      row: cell.row,
+      col: cell.col,
+      layer: cell.layer + 1,
+      removed: false,
+      powerup: kind,
+    });
+  }
+
+  return [...tiles, ...powerupTiles];
 }
 
 export function isTileCovered(tile, board) {

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../state/AuthContext';
+import { isDiscordActivity } from '../discord/sdk';
 
 interface AccountScreenProps {
   onBack: () => void;
@@ -40,7 +41,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({ onBack, onLeaderbo
       </header>
 
       <div className="relative z-10 flex-1 flex flex-col items-center px-4 pt-6 pb-[calc(env(safe-area-inset-bottom)+16px)]">
-        {!signedIn && (
+        {!signedIn && !isDiscordActivity() && (
           <div className="w-full max-w-sm rounded-3xl bg-dusk-700/40 border border-cream-100/10 p-5">
             <div className="flex rounded-full bg-dusk-800/70 border border-cream-100/10 p-1 mb-5">
               <button
@@ -110,6 +111,18 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({ onBack, onLeaderbo
                 {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
               </button>
             </form>
+          </div>
+        )}
+
+        {!signedIn && isDiscordActivity() && (
+          <div className="w-full max-w-sm rounded-3xl bg-dusk-700/40 border border-cream-100/10 p-6 text-center">
+            <div className="text-4xl mb-2 animate-pulse" aria-hidden="true">
+              🔗
+            </div>
+            <p className="font-body text-sm text-cream-200/70">
+              Signing you in with your Discord account… no username or password needed here — your progress
+              and rank are tied to your Discord identity automatically.
+            </p>
           </div>
         )}
 

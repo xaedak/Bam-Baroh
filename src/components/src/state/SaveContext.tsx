@@ -22,6 +22,7 @@ export interface LevelResultInput {
   hintsUsed: number;
   magicSolvesUsed: number;
   porkMatches: number;
+  powerupsUsed: number;
 }
 
 export interface MultiplayerResultInput {
@@ -208,6 +209,7 @@ export function SaveProvider({ children }: { children: React.ReactNode }) {
       stats.magicSolvesUsed += input.magicSolvesUsed;
       stats.totalPlayTimeSeconds += Math.max(0, input.elapsedSeconds);
       stats.porkTilesMatched += input.porkMatches;
+      stats.powerupsUsed += input.powerupsUsed;
 
       if (input.status === 'won') {
         stats.levelsWon += 1;

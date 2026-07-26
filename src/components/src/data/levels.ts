@@ -1,4 +1,4 @@
-import { ALL_FOOD_TYPES, BoardTile, FoodType, LevelConfig } from '../types/game';
+import { ALL_FOOD_TYPES, BoardTile, FoodType, LevelConfig, PowerupKind } from '../types/game';
 import { mulberry32, seedFromLevel, shuffleWithRng } from './rng';
 
 // The level generator has no precomputed data or hard ceiling on how many
@@ -8,7 +8,10 @@ import { mulberry32, seedFromLevel, shuffleWithRng } from './rng';
 // keep level numbers finite for save data / UI purposes; it is never reached
 // in practice.
 export const TOTAL_LEVELS = 999_999;
-export const TRAY_SIZE = 7;
+// A 4-slot tray (down from 7) means a single wrong dig can overflow you much
+// faster - this is the main lever that makes the game "hard from level one"
+// as requested, independent of board size/stacking.
+export const TRAY_SIZE = 4;
 
 /**
  * Difficulty scales smoothly and *indefinitely* with level number using an
@@ -36,16 +39,20 @@ export function getLevelConfig(level: number): LevelConfig {
   // level 1000, so endless play never truly plateaus.
   const overtime = Math.log10(1 + clamped / 1000);
 
-  const rows = Math.min(9, 5 + Math.floor(progress * 4.2));
-  const cols = Math.min(11, 6 + Math.floor(progress * 5.2));
+  const rows = Math.min(9, 6 + Math.floor(progress * 3.2));
+  const cols = Math.min(11, 7 + Math.floor(progress * 4.2));
   // "layers" is the max height a single stack of tiles can be piled to on
-  // one board cell - the core puzzle mechanic: every tile you see may have
-  // others buried underneath it that are untouchable until it's cleared.
-  // Starts at 2 (some stacking from level 1) and climbs to genuinely deep
-  // digging puzzles at higher levels.
-  const layers = Math.min(8, 2 + Math.floor(progress * 7.5));
+  // one board cell - the core puzzle mechanic, borrowed straight from
+  // classic mahjong solitaire: every tile you see may have others buried
+  // underneath it that are untouchable until it's cleared. Starts at 3 (real
+  // stacking from level 1, not just a cosmetic peek) and climbs to
+  // genuinely deep digging puzzles at higher levels.
+  const layers = Math.min(9, 3 + Math.floor(progress * 7));
 
-  const typeCount = Math.min(5, 3 + Math.floor(progress * 3));
+  // More tile families in play at once from the very start (a 4-slot tray
+  // with only 3 families would be trivial) climbing toward the full roster
+  // of meats/fruit/veg/grain as levels progress.
+  const typeCount = Math.min(ALL_FOOD_TYPES.length, 6 + Math.floor(progress * (ALL_FOOD_TYPES.length - 6)));
   const tileTypes = ALL_FOOD_TYPES.slice(0, typeCount);
 
   // Capacity is just the physical number of tile slots on the board now
@@ -63,14 +70,15 @@ export function getLevelConfig(level: number): LevelConfig {
   let totalTiles = Math.min(desired, maxByCapacity);
   totalTiles = Math.max(totalTiles, 18);
 
-  // Time pressure now kicks in much earlier (soon after the tutorial
-  // levels) since digging through stacks takes real thought - and keeps
-  // tightening slowly forever past the point where the progress curve alone
-  // would have flattened out, down to a hard floor.
-  const timeLimitSeconds =
-    progress > 0.12
-      ? Math.max(25, Math.round(220 - progress * 90 - overtime * 22))
-      : null;
+  // The clock now runs from level 1 (previously it only kicked in once
+  // progress > 0.12) so there's real time pressure immediately, tightening
+  // as levels get harder and never fully flattening out thanks to overtime.
+  const timeLimitSeconds = Math.max(25, Math.round(160 - progress * 90 - overtime * 22));
+
+  // A small, steady trickle of powerup tiles - present from level 1 as
+  // helpful "escape valves" against the tighter 4-slot tray, growing slowly
+  // with difficulty so later, harder boards hand out a few more.
+  const powerupCount = Math.min(6, 1 + Math.floor(progress * 5));
 
   return {
     level: clamped,
@@ -81,6 +89,7 @@ export function getLevelConfig(level: number): LevelConfig {
     totalTiles,
     traySize: TRAY_SIZE,
     timeLimitSeconds,
+    powerupCount,
   };
 }
 
@@ -189,7 +198,36 @@ export function generateBoard(config: LevelConfig): BoardTile[] {
     removed: false,
   }));
 
-  return tiles;
+  // Layer a handful of powerup tiles directly on top of existing stacks, one
+  // extra tile above whatever was already the tallest at that cell - so a
+  // powerup is always already uncovered and reachable the moment the board
+  // loads, never requiring the player to dig for it first.
+  const stackTops = new Map<string, { row: number; col: number; layer: number }>();
+  for (const cell of chosenCells) {
+    const key = `${cell.row},${cell.col}`;
+    const existing = stackTops.get(key);
+    if (!existing || cell.layer > existing.layer) {
+      stackTops.set(key, cell);
+    }
+  }
+  const candidateCells = shuffleWithRng(Array.from(stackTops.values()), rng);
+  const powerupKinds: PowerupKind[] = ['wild', 'bomb', 'freeze'];
+  const powerupTiles: BoardTile[] = [];
+  for (let i = 0; i < Math.min(config.powerupCount, candidateCells.length); i++) {
+    const cell = candidateCells[i];
+    const kind = powerupKinds[Math.floor(rng() * powerupKinds.length)];
+    powerupTiles.push({
+      id: `L${config.level}-pw-${cell.row}-${cell.col}-${i}`,
+      type: types[Math.floor(rng() * types.length)],
+      row: cell.row,
+      col: cell.col,
+      layer: cell.layer + 1,
+      removed: false,
+      powerup: kind,
+    });
+  }
+
+  return [...tiles, ...powerupTiles];
 }
 
 export function isTileCovered(tile: BoardTile, board: BoardTile[]): boolean {
@@ -230,6 +268,18 @@ export function computeSolveOrder(board: BoardTile[]): string[] {
   let pool = remaining;
   while (pool.length > 0) {
     const uncovered = uncoveredOf(pool);
+
+    // Powerup tiles never join a 3-of-a-kind match - they're removed the
+    // instant they're reachable, same as a player would tap one for the
+    // free effect. Handle them first so they never get mistaken for part of
+    // a type triplet below.
+    const freePowerup = uncovered.find((t) => t.powerup);
+    if (freePowerup) {
+      order.push(freePowerup.id);
+      pool = pool.filter((t) => t.id !== freePowerup.id);
+      continue;
+    }
+
     const byType = new Map<FoodType, BoardTile[]>();
     for (const t of uncovered) {
       const list = byType.get(t.type) ?? [];
