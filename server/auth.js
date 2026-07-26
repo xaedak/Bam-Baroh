@@ -39,6 +39,58 @@ export function accountExists(username) {
   return !!db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username);
 }
 
+/**
+ * Finds the account already linked to this Discord user id, or creates one.
+ * This is the dedup boundary for Discord-based progression: discord_id is
+ * UNIQUE, so no matter how many times a returning player launches the
+ * Activity (from any server), they resolve to exactly one account row and
+ * therefore exactly one `saves` record.
+ *
+ * `username`/`avatar` are refreshed on every login in case the player
+ * changed their Discord display name or avatar since we last saw them.
+ */
+export function findOrCreateDiscordAccount(discordId, username, avatar) {
+  const existing = db.prepare('SELECT * FROM accounts WHERE discord_id = ?').get(discordId);
+  if (existing) {
+    db.prepare('UPDATE accounts SET username = ?, discord_avatar = ? WHERE id = ?').run(
+      uniqueDisplayName(username, existing.id),
+      avatar || null,
+      existing.id
+    );
+    return db.prepare('SELECT * FROM accounts WHERE id = ?').get(existing.id);
+  }
+
+  const finalUsername = uniqueDisplayName(username, null);
+  const stmt = db.prepare(
+    `INSERT INTO accounts (username, discord_id, discord_avatar, xp, wins, matches, accuracy, speed, created_at)
+     VALUES (?, ?, ?, 0, 0, 0, 0, 0, ?)`
+  );
+  const info = stmt.run(finalUsername, discordId, avatar || null, Date.now());
+  return db.prepare('SELECT * FROM accounts WHERE id = ?').get(info.lastInsertRowid);
+}
+
+/**
+ * `username` is a UNIQUE column shared with the legacy password accounts,
+ * so two different Discord users with the same display name (or a
+ * collision with an existing manual account) need to be disambiguated
+ * before insert/update. `excludeId` lets a rename check ignore the row
+ * being updated.
+ */
+function uniqueDisplayName(rawName, excludeId) {
+  const base = String(rawName || 'Player').trim().slice(0, 20) || 'Player';
+  let candidate = base;
+  let suffix = 0;
+  // Cap the loop defensively; collisions this deep are effectively
+  // impossible in practice.
+  while (suffix < 1000) {
+    const row = db.prepare('SELECT id FROM accounts WHERE username = ?').get(candidate);
+    if (!row || row.id === excludeId) return candidate;
+    suffix += 1;
+    candidate = `${base}${suffix}`;
+  }
+  return `${base}${Date.now()}`;
+}
+
 export function createSession(username) {
   const token = crypto.randomBytes(24).toString('hex');
   db.prepare('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)').run(

@@ -7,7 +7,7 @@ interface AccountScreenProps {
 }
 
 export const AccountScreen: React.FC<AccountScreenProps> = ({ onBack, onLeaderboard }) => {
-  const { token, profile, loading, error, clearError, login, register, logout } = useAuth();
+  const { token, profile, loading, error, clearError, login, register, logout, viaDiscord } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -118,6 +118,11 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({ onBack, onLeaderbo
             <div className="rounded-3xl bg-dusk-700/40 border border-cream-100/10 p-5 text-center">
               <p className="font-display text-3xl text-marigold-400">{profile.username}</p>
               <p className="font-mono text-xs uppercase tracking-wide text-betel-500 mt-1">{profile.rank.name}</p>
+              {viaDiscord && (
+                <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-dusk-800/70 border border-cream-100/10 px-2.5 py-1 font-mono text-[10px] text-cream-200/60">
+                  🔗 Synced via Discord — progress follows you to any server
+                </p>
+              )}
 
               <div className="mt-4">
                 <div className="w-full h-2 rounded-full bg-dusk-800/70 overflow-hidden">

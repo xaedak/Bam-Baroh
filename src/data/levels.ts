@@ -16,13 +16,13 @@ export const TRAY_SIZE = 7;
  * a hard 0->1 ramp over a fixed level count. This means:
  * - progress keeps climbing well past level 1000, so the game keeps getting
  *   meaningfully harder for 1000+ levels instead of maxing out at level 100.
- * - board size / layers / food-type variety still asymptote toward the same
- *   sane maximums (so boards never become unplayably huge).
+ * - board size / stack height / food-type variety still asymptote toward the
+ *   same sane maximums (so boards never become unplayably huge).
  * - time limits and tile density keep tightening slowly for very high
  *   levels via an unbounded "overtime" term derived from log(level), giving
  *   endless levels a genuine long-tail difficulty curve.
  */
-const DIFFICULTY_RAMP = 420; // higher = slower climb toward max difficulty
+const DIFFICULTY_RAMP = 260; // higher = slower climb toward max difficulty
 
 function difficultyProgress(level: number): number {
   // Approaches 1 as level -> infinity, but never reaches it.
@@ -38,19 +38,20 @@ export function getLevelConfig(level: number): LevelConfig {
 
   const rows = Math.min(9, 5 + Math.floor(progress * 4.2));
   const cols = Math.min(11, 6 + Math.floor(progress * 5.2));
-  const layers = Math.min(5, 1 + Math.floor(progress * 4.8));
+  // "layers" is the max height a single stack of tiles can be piled to on
+  // one board cell - the core puzzle mechanic: every tile you see may have
+  // others buried underneath it that are untouchable until it's cleared.
+  // Starts at 2 (some stacking from level 1) and climbs to genuinely deep
+  // digging puzzles at higher levels.
+  const layers = Math.min(8, 2 + Math.floor(progress * 7.5));
 
-  const typeCount = Math.min(5, 3 + Math.floor(progress * 2.4));
+  const typeCount = Math.min(5, 3 + Math.floor(progress * 3));
   const tileTypes = ALL_FOOD_TYPES.slice(0, typeCount);
 
-  // Pyramid capacity: layer L (0-indexed) is inset by L cells on each side.
-  let capacity = 0;
-  for (let l = 0; l < layers; l++) {
-    const r = rows - 2 * l;
-    const c = cols - 2 * l;
-    if (r < 2 || c < 2) break;
-    capacity += r * c;
-  }
+  // Capacity is just the physical number of tile slots on the board now
+  // that stacks aren't inset into a shrinking pyramid - every cell can hold
+  // up to `layers` tiles.
+  const capacity = rows * cols * layers;
 
   // Base density ramps with progress, then a small unbounded bonus (via
   // overtime) nudges density even higher on very late levels, still capped
@@ -62,11 +63,13 @@ export function getLevelConfig(level: number): LevelConfig {
   let totalTiles = Math.min(desired, maxByCapacity);
   totalTiles = Math.max(totalTiles, 18);
 
-  // Time limits keep tightening slowly forever past the point where the
-  // progress curve alone would have flattened out, down to a hard floor.
+  // Time pressure now kicks in much earlier (soon after the tutorial
+  // levels) since digging through stacks takes real thought - and keeps
+  // tightening slowly forever past the point where the progress curve alone
+  // would have flattened out, down to a hard floor.
   const timeLimitSeconds =
-    progress > 0.35
-      ? Math.max(30, Math.round(240 - progress * 90 - overtime * 22))
+    progress > 0.12
+      ? Math.max(25, Math.round(220 - progress * 90 - overtime * 22))
       : null;
 
   return {
@@ -81,36 +84,80 @@ export function getLevelConfig(level: number): LevelConfig {
   };
 }
 
-function computeLayerCells(rows: number, cols: number, layers: number) {
-  const byLayer: { row: number; col: number; layer: number }[][] = [];
-  for (let l = 0; l < layers; l++) {
-    const r0 = l;
-    const r1 = rows - 1 - l;
-    const c0 = l;
-    const c1 = cols - 1 - l;
-    if (r1 - r0 < 1 || c1 - c0 < 1) break;
-    const cells: { row: number; col: number; layer: number }[] = [];
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
-        cells.push({ row: r, col: c, layer: l });
-      }
-    }
-    byLayer.push(cells);
+/**
+ * Chooses which (row, col) cells get a tile stack and how tall each stack
+ * is, then expands every stack into individual {row, col, layer} slots
+ * (layer 0 = bottom/first-placed, increasing upward). Stacks are placed on
+ * an ordinary rows x cols grid - no shrinking pyramid - so a tall stack can
+ * appear anywhere on the board and multiple stacks can be adjacent, which is
+ * what makes "dig down through this exact pile" a real puzzle rather than a
+ * cosmetic offset.
+ *
+ * Stack heights are biased toward `maxHeight` more strongly as `progress`
+ * increases, so higher levels have more tall piles rather than lots of
+ * shallow ones - the actual source of extra difficulty at high levels,
+ * beyond just "more tiles".
+ */
+function pickStackCells(
+  rows: number,
+  cols: number,
+  maxHeight: number,
+  totalTiles: number,
+  progress: number,
+  rng: () => number
+): { row: number; col: number; layer: number }[] {
+  const allCells: { row: number; col: number }[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) allCells.push({ row: r, col: c });
   }
-  return byLayer;
+  const shuffled = shuffleWithRng(allCells, rng);
+
+  // Exponent < 1 skews Math.pow(rng(), exp) toward 1, so lower exponents
+  // (higher progress) produce taller stacks more often.
+  const biasExp = Math.max(0.35, 1 - progress * 0.65);
+
+  const heights = new Map<string, number>();
+  const usedOrder: { row: number; col: number }[] = [];
+  const key = (r: number, c: number) => `${r},${c}`;
+
+  let remaining = totalTiles;
+  let cellIndex = 0;
+
+  while (remaining > 0 && cellIndex < shuffled.length) {
+    const cell = shuffled[cellIndex++];
+    const h = Math.min(maxHeight, remaining, 1 + Math.floor(Math.pow(rng(), biasExp) * maxHeight));
+    if (h <= 0) continue;
+    heights.set(key(cell.row, cell.col), h);
+    usedOrder.push(cell);
+    remaining -= h;
+  }
+
+  // Rare fallback (only if the grid is too small for the requested tile
+  // count at this max height): deepen already-used stacks up to the cap.
+  let guard = 0;
+  while (remaining > 0 && usedOrder.length > 0 && guard < 20000) {
+    const cell = usedOrder[guard % usedOrder.length];
+    const k = key(cell.row, cell.col);
+    const h = heights.get(k) ?? 0;
+    if (h < maxHeight) {
+      heights.set(k, h + 1);
+      remaining -= 1;
+    }
+    guard++;
+  }
+
+  const cells: { row: number; col: number; layer: number }[] = [];
+  for (const [k, h] of heights) {
+    const [r, c] = k.split(',').map(Number);
+    for (let l = 0; l < h; l++) cells.push({ row: r, col: c, layer: l });
+  }
+  return cells;
 }
 
 export function generateBoard(config: LevelConfig): BoardTile[] {
   const rng = mulberry32(seedFromLevel(config.level));
-  const byLayer = computeLayerCells(config.rows, config.cols, config.layers);
-
-  // Fill lower layers first so every tile above has physical support below it.
-  const orderedCells: { row: number; col: number; layer: number }[] = [];
-  for (const layerCells of byLayer) {
-    orderedCells.push(...shuffleWithRng(layerCells, rng));
-  }
-
-  const chosenCells = orderedCells.slice(0, config.totalTiles);
+  const progress = difficultyProgress(config.level);
+  const chosenCells = pickStackCells(config.rows, config.cols, config.layers, config.totalTiles, progress, rng);
 
   // Build a type multiset where every type count is a multiple of 3.
   const groupCount = config.totalTiles / 3;

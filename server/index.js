@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
@@ -13,8 +14,11 @@ import {
   getSessionUsername,
   destroySession,
   authMiddleware,
+  findOrCreateDiscordAccount,
 } from './auth.js';
 import { getProfile, getLeaderboard, recordGameResult } from './stats.js';
+import { exchangeDiscordCode, isDiscordConfigured } from './discord.js';
+import { getAccountIdForUsername, loadSave, writeSave } from './saves.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -52,6 +56,42 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ ok: true, token, profile: getProfile(username) });
 });
 
+// Primary login path when running as a Discord Activity: the client
+// obtains a one-time `code` via the Embedded App SDK's authorize command
+// and sends it here. We exchange it for the player's real Discord
+// identity, find-or-create their account (deduped on discord_id so the
+// same player never gets two rows no matter which server they launch
+// from), and return a normal session token — same shape as the
+// username/password flow, so multiplayer/leaderboard code needs no
+// changes downstream.
+app.post('/api/auth/discord', async (req, res) => {
+  if (!isDiscordConfigured()) {
+    return res.status(503).json({
+      ok: false,
+      error: 'Discord login is not configured on this server (DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET missing).',
+    });
+  }
+  const { code } = req.body || {};
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ ok: false, error: 'Missing Discord auth code.' });
+  }
+  try {
+    const discordUser = await exchangeDiscordCode(code);
+    const account = findOrCreateDiscordAccount(discordUser.id, discordUser.username, discordUser.avatar);
+    const token = createSession(account.username);
+    const save = loadSave(account.id);
+    res.json({
+      ok: true,
+      token,
+      profile: getProfile(account.username),
+      save: save?.data ?? null,
+    });
+  } catch (err) {
+    console.error('Discord auth failed:', err.message);
+    res.status(502).json({ ok: false, error: 'Could not verify Discord account. Please try again.' });
+  }
+});
+
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   if (req.token) destroySession(req.token);
   res.json({ ok: true });
@@ -73,6 +113,36 @@ app.get('/api/profile/:username', (req, res) => {
 app.get('/api/leaderboard', (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 50;
   res.json({ ok: true, leaderboard: getLeaderboard(limit) });
+});
+
+// ---- Cross-server progression sync -------------------------------------
+// Backs the "play on any Discord server, pick up where you left off"
+// requirement: unlockedLevel, stars, achievements, stats, tokens, and
+// settings all live here, keyed by account id (which is itself keyed by
+// discord_id). Guests (no session) keep using localStorage only.
+
+app.get('/api/save', authMiddleware, (req, res) => {
+  if (!req.username) return res.status(401).json({ ok: false, error: 'Not signed in.' });
+  const accountId = getAccountIdForUsername(req.username);
+  if (!accountId) return res.status(404).json({ ok: false, error: 'Account not found.' });
+  const save = loadSave(accountId);
+  res.json({ ok: true, save: save?.data ?? null, updatedAt: save?.updatedAt ?? null });
+});
+
+app.put('/api/save', authMiddleware, (req, res) => {
+  if (!req.username) return res.status(401).json({ ok: false, error: 'Not signed in.' });
+  const accountId = getAccountIdForUsername(req.username);
+  if (!accountId) return res.status(404).json({ ok: false, error: 'Account not found.' });
+  const { save } = req.body || {};
+  if (!save || typeof save !== 'object') {
+    return res.status(400).json({ ok: false, error: 'Missing save payload.' });
+  }
+  try {
+    const updatedAt = writeSave(accountId, save);
+    res.json({ ok: true, updatedAt });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message || 'Could not save progress.' });
+  }
 });
 
 // ---- Realtime game server ----------------------------------------------

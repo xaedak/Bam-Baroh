@@ -21,7 +21,7 @@ npm run preview    # preview the production build
 
 ## Features
 
-- **Main Menu** — title, continue/play, scrollable 100-level select grid with lock/star state
+- **Main Menu** — animated, festival-themed home screen with an endless vertical level path (lock/star/milestone state), continue/play, daily rewards
 - **Play Screen** — layered board, 7-slot tray, live tile counter, optional countdown timer
 - **Settings** — dark mode, music, and SFX toggles, plus a progress reset
 - **Tutorial** — walkthrough of the match-3 tray mechanic and the food tiles, shown automatically on first launch
@@ -68,18 +68,75 @@ You can also change the server URL at runtime from the in-app Multiplayer menu (
 - The board and tray are fully shared — any player can tap a tile, and the match/score updates sync to everyone instantly. The server is authoritative (it runs the same board generator and match-3 logic as single-player) so all clients always agree on state.
 - Rooms are capped at 8 players and close automatically once everyone leaves.
 
+## Discord Activity: account-based progression
+
+When launched as a Discord Activity, the game signs the player in with their
+real Discord identity instead of the old device-local save. Progress
+(unlocked level, stars, achievements, stats, tokens, settings) is then
+stored server-side against that Discord account, so it follows the player
+to any other server where they open the Activity — not just this device.
+
+**Setup:**
+
+1. Create (or open) your app at the
+   [Discord Developer Portal](https://discord.com/developers/applications).
+2. Under **OAuth2**, copy the **Client ID** and (generate/copy) the **Client Secret**.
+3. Server side — copy `server/.env.example` to `server/.env` and fill in:
+   ```
+   DISCORD_CLIENT_ID=...
+   DISCORD_CLIENT_SECRET=...
+   ```
+4. Client side — copy `.env.example` (project root) to `.env` and fill in:
+   ```
+   VITE_DISCORD_CLIENT_ID=...
+   ```
+   (Same ID as above — this one is public and safe to ship to the browser;
+   the secret must only ever live in `server/.env`.)
+5. Under **Activities → URL Mappings** in the Developer Portal, map your
+   root URL to wherever the client is deployed, per
+   [Discord's Activities docs](https://discord.com/developers/docs/activities/development-guides/setting-up-authentication).
+
+**How it works under the hood:**
+- `src/discord/sdk.ts` detects whether the game is actually running inside
+  Discord (vs. a plain browser tab) and, if so, drives the
+  `@discord/embedded-app-sdk` authorize flow to get a one-time code.
+- That code is sent to `POST /api/auth/discord` on the server, which is the
+  only place the client secret is used, to exchange it for the player's
+  real Discord user id.
+- The server finds-or-creates one account per `discord_id` (never two, no
+  matter how many servers/guilds the player launches from) and returns a
+  normal session token — the same shape the existing username/password
+  login already produces, so multiplayer and the leaderboard needed no
+  changes.
+- `GET`/`PUT /api/save` load and persist the full progression blob against
+  that account. `SaveContext` hydrates from there once and then
+  debounce-pushes local changes back up while signed in via Discord.
+- Outside Discord (plain browser, local dev), none of this runs — the app
+  falls back to the original `localStorage` save and the existing
+  username/password login untouched.
+
+**Important caveat:** the OAuth code exchange and the Embedded App SDK
+handshake can only be exercised for real from inside the Discord client
+itself, against a real Discord application. Both were built to Discord's
+documented Activities flow, but neither could be run end-to-end in the
+environment this was developed in (no network access, and no way to open
+an actual Discord client) — please test the full login handshake for real
+once you have Discord app credentials wired up.
+
 ## Project Structure
 
 ```
 src/
   components/   Main Menu, Play Screen, Settings, Tutorial, Tile, Tray, ResultModal,
-                Multiplayer Menu/Lobby/PlayScreen
+                Multiplayer Menu/Lobby/PlayScreen, LevelPath, FloatingFoods
   data/         procedural level generator + seeded RNG
+  discord/      Discord Embedded App SDK wrapper (Activity detection + auth handshake)
   hooks/        game engine (state machine) + audio manager
   multiplayer/  socket connection helper + shared client-side types
-  state/        save/settings context + multiplayer context (both backed by
-                localStorage / Socket.IO respectively)
+  state/        save/settings context (localStorage + Discord-account sync)
+                and multiplayer context (Socket.IO)
   types/        shared TypeScript types
-server/         standalone Socket.IO server: rooms, host controls, authoritative
-                board/match logic (ported from src/data + the game engine)
+server/         standalone Socket.IO + Express server: rooms, host controls, authoritative
+                board/match logic, accounts (password or Discord), and cross-server
+                progression storage
 ```

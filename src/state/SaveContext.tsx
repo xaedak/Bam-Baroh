@@ -1,8 +1,10 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { SaveData, SettingsState } from '../types/game';
 import { loadSave, writeSave } from './save';
 import { TOTAL_LEVELS } from '../data/levels';
 import { Achievement, findNewlyUnlocked } from '../data/achievements';
+import { useAuth } from './AuthContext';
+import { fetchSave, pushSave } from '../multiplayer/api';
 
 /** Token rewards for a 7-day daily-reward cycle; the cycle repeats after day 7. */
 export const DAILY_REWARD_TABLE = [10, 15, 20, 30, 40, 55, 100];
@@ -79,13 +81,80 @@ function applyAchievementUnlocks(save: SaveData): { save: SaveData; unlocked: Ac
   return { save: { ...save, achievements, tokens }, unlocked };
 }
 
+/** Applies a raw incoming blob (from the server) on top of local defaults, the
+ * same way loadSave() does for localStorage, so a partial/older shape can't
+ * crash the app if the SaveData interface has grown new fields since. */
+function mergeIncomingSave(incoming: unknown): SaveData | null {
+  if (!incoming || typeof incoming !== 'object') return null;
+  const base = loadSave();
+  const parsed = incoming as Partial<SaveData>;
+  return {
+    ...base,
+    ...parsed,
+    settings: { ...base.settings, ...(parsed.settings ?? {}) },
+    stats: { ...base.stats, ...(parsed.stats ?? {}) },
+    daily: { ...base.daily, ...(parsed.daily ?? {}) },
+    achievements: { ...(parsed.achievements ?? {}) },
+    seenAchievementIds: Array.isArray(parsed.seenAchievementIds) ? parsed.seenAchievementIds : [],
+  };
+}
+
 export function SaveProvider({ children }: { children: React.ReactNode }) {
   const [save, setSave] = useState<SaveData>(() => loadSave());
   const [pendingAchievements, setPendingAchievements] = useState<Achievement[]>([]);
+  const { token, viaDiscord, discordChecked, discordSave } = useAuth();
+  const hydratedRef = useRef(false);
+  const syncTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     writeSave(save);
   }, [save]);
+
+  // Cross-server progression: once Discord auth resolves, load whatever
+  // this account already has saved server-side (a returning player picking
+  // up on a new server) and use it as the source of truth. If the account
+  // has no save yet (first time linking), push the current local save up
+  // instead, so it isn't lost.
+  useEffect(() => {
+    if (!discordChecked || !viaDiscord || !token || hydratedRef.current) return;
+    hydratedRef.current = true;
+
+    if (discordSave) {
+      const merged = mergeIncomingSave(discordSave);
+      if (merged) {
+        setSave(merged);
+        return;
+      }
+    }
+    // No prior server save for this account (or fetch/shape failed) —
+    // fall back to whatever fetchSave reports, and if that's also empty,
+    // bootstrap the account with the current local progress.
+    fetchSave(token).then((res) => {
+      const merged = res.ok ? mergeIncomingSave(res.data?.save) : null;
+      if (merged) {
+        setSave(merged);
+      } else {
+        setSave((prev) => {
+          pushSave(token, prev);
+          return prev;
+        });
+      }
+    });
+  }, [discordChecked, viaDiscord, token, discordSave]);
+
+  // Debounced push of any local progression change up to the account,
+  // while signed in via Discord. Skipped for the hydration write itself
+  // (nothing has "changed" from the player's perspective there).
+  useEffect(() => {
+    if (!viaDiscord || !token || !hydratedRef.current) return;
+    if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = window.setTimeout(() => {
+      pushSave(token, save);
+    }, 1500);
+    return () => {
+      if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
+    };
+  }, [save, viaDiscord, token]);
 
   useEffect(() => {
     const root = document.documentElement;

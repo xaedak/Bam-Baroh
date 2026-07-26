@@ -72,3 +72,27 @@ export function fetchProfile(username: string) {
 export function fetchLeaderboard(limit = 50) {
   return request<{ leaderboard: LeaderboardEntry[] }>(`/api/leaderboard?limit=${limit}`);
 }
+
+/** Exchanges a Discord OAuth `code` (from the Embedded App SDK) for a session. */
+export function loginWithDiscord(code: string) {
+  return request<{ token: string; profile: Profile; save: unknown | null }>('/api/auth/discord', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+/** Fetches this account's cross-server progression blob (unlocked level, stars, achievements, etc). */
+export function fetchSave(token: string) {
+  return request<{ save: unknown | null; updatedAt: number | null }>('/api/save', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/** Pushes the local progression blob up to the account so it follows the player across servers. */
+export function pushSave(token: string, save: unknown) {
+  return request<{ updatedAt: number }>('/api/save', {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ save }),
+  });
+}

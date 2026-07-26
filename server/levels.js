@@ -7,7 +7,7 @@ import { mulberry32, seedFromLevel, shuffleWithRng } from './rng.js';
 export const ALL_FOOD_TYPES = ['pork', 'fish', 'chicken', 'rice', 'pitha'];
 export const TOTAL_LEVELS = 999_999;
 export const TRAY_SIZE = 7;
-const DIFFICULTY_RAMP = 420;
+const DIFFICULTY_RAMP = 260;
 
 function difficultyProgress(level) {
   return level / (level + DIFFICULTY_RAMP);
@@ -20,18 +20,16 @@ export function getLevelConfig(level) {
 
   const rows = Math.min(9, 5 + Math.floor(progress * 4.2));
   const cols = Math.min(11, 6 + Math.floor(progress * 5.2));
-  const layers = Math.min(5, 1 + Math.floor(progress * 4.8));
+  // "layers" is the max height a single stack of tiles can be piled to on
+  // one board cell - every tile may have others buried underneath it that
+  // are untouchable until it's cleared.
+  const layers = Math.min(8, 2 + Math.floor(progress * 7.5));
 
-  const typeCount = Math.min(5, 3 + Math.floor(progress * 2.4));
+  const typeCount = Math.min(5, 3 + Math.floor(progress * 3));
   const tileTypes = ALL_FOOD_TYPES.slice(0, typeCount);
 
-  let capacity = 0;
-  for (let l = 0; l < layers; l++) {
-    const r = rows - 2 * l;
-    const c = cols - 2 * l;
-    if (r < 2 || c < 2) break;
-    capacity += r * c;
-  }
+  // Physical number of tile slots: every cell can hold up to `layers` tiles.
+  const capacity = rows * cols * layers;
 
   let desired = Math.round(18 + progress * 96 + overtime * 12);
   desired = Math.floor(desired / 3) * 3;
@@ -54,35 +52,63 @@ export function getLevelConfig(level) {
   };
 }
 
-function computeLayerCells(rows, cols, layers) {
-  const byLayer = [];
-  for (let l = 0; l < layers; l++) {
-    const r0 = l;
-    const r1 = rows - 1 - l;
-    const c0 = l;
-    const c1 = cols - 1 - l;
-    if (r1 - r0 < 1 || c1 - c0 < 1) break;
-    const cells = [];
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
-        cells.push({ row: r, col: c, layer: l });
-      }
-    }
-    byLayer.push(cells);
+/**
+ * Chooses which (row, col) cells get a tile stack and how tall each stack
+ * is, then expands every stack into individual {row, col, layer} slots.
+ * Stacks sit on an ordinary rows x cols grid (no shrinking pyramid), so a
+ * tall pile can appear anywhere - that's what makes digging down through a
+ * specific stack a real puzzle. Heights are biased toward `maxHeight` more
+ * as `progress` increases.
+ */
+function pickStackCells(rows, cols, maxHeight, totalTiles, progress, rng) {
+  const allCells = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) allCells.push({ row: r, col: c });
   }
-  return byLayer;
+  const shuffled = shuffleWithRng(allCells, rng);
+
+  const biasExp = Math.max(0.35, 1 - progress * 0.65);
+
+  const heights = new Map();
+  const usedOrder = [];
+  const key = (r, c) => `${r},${c}`;
+
+  let remaining = totalTiles;
+  let cellIndex = 0;
+
+  while (remaining > 0 && cellIndex < shuffled.length) {
+    const cell = shuffled[cellIndex++];
+    const h = Math.min(maxHeight, remaining, 1 + Math.floor(Math.pow(rng(), biasExp) * maxHeight));
+    if (h <= 0) continue;
+    heights.set(key(cell.row, cell.col), h);
+    usedOrder.push(cell);
+    remaining -= h;
+  }
+
+  let guard = 0;
+  while (remaining > 0 && usedOrder.length > 0 && guard < 20000) {
+    const cell = usedOrder[guard % usedOrder.length];
+    const k = key(cell.row, cell.col);
+    const h = heights.get(k) ?? 0;
+    if (h < maxHeight) {
+      heights.set(k, h + 1);
+      remaining -= 1;
+    }
+    guard++;
+  }
+
+  const cells = [];
+  for (const [k, h] of heights) {
+    const [r, c] = k.split(',').map(Number);
+    for (let l = 0; l < h; l++) cells.push({ row: r, col: c, layer: l });
+  }
+  return cells;
 }
 
 export function generateBoard(config) {
   const rng = mulberry32(seedFromLevel(config.level));
-  const byLayer = computeLayerCells(config.rows, config.cols, config.layers);
-
-  const orderedCells = [];
-  for (const layerCells of byLayer) {
-    orderedCells.push(...shuffleWithRng(layerCells, rng));
-  }
-
-  const chosenCells = orderedCells.slice(0, config.totalTiles);
+  const progress = difficultyProgress(config.level);
+  const chosenCells = pickStackCells(config.rows, config.cols, config.layers, config.totalTiles, progress, rng);
 
   const groupCount = config.totalTiles / 3;
   const types = config.tileTypes;

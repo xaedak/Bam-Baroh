@@ -16,7 +16,7 @@ export const Tile: React.FC<TileProps> = React.memo(
     const meta = FOOD_META[tile.type];
     const cellW = 100 / cols;
     const cellH = 100 / rows;
-    const layerOffset = tile.layer * 3.5;
+    const layerOffset = tile.layer * 2.5;
 
     return (
       <button

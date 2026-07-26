@@ -82,6 +82,31 @@ export default {
           '75%': { transform: 'translateY(3%) scale(0.99)', opacity: '1' },
           '100%': { transform: 'translateY(0%) scale(1)', opacity: '1' },
         },
+        floatSlow: {
+          '0%': { transform: 'translate(0, 0) rotate(0deg)' },
+          '25%': { transform: 'translate(8px, -18px) rotate(6deg)' },
+          '50%': { transform: 'translate(-4px, -30px) rotate(-4deg)' },
+          '75%': { transform: 'translate(-10px, -14px) rotate(3deg)' },
+          '100%': { transform: 'translate(0, 0) rotate(0deg)' },
+        },
+        logoEntrance: {
+          '0%': { transform: 'scale(0.4) rotate(-8deg)', opacity: '0' },
+          '60%': { transform: 'scale(1.08) rotate(3deg)', opacity: '1' },
+          '80%': { transform: 'scale(0.97) rotate(-1deg)' },
+          '100%': { transform: 'scale(1) rotate(0deg)', opacity: '1' },
+        },
+        fadeUp: {
+          '0%': { transform: 'translateY(14px)', opacity: '0' },
+          '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        lanternSwing: {
+          '0%, 100%': { transform: 'rotate(-4deg)' },
+          '50%': { transform: 'rotate(4deg)' },
+        },
       },
       animation: {
         popIn: 'popIn 260ms cubic-bezier(.2,.9,.3,1.3) both',
@@ -92,6 +117,11 @@ export default {
         hintPulse: 'hintPulse 900ms ease-in-out infinite',
         floatUp: 'floatUp 900ms ease-out forwards',
         achievementSlideUp: 'achievementSlideUp 700ms cubic-bezier(.34,1.56,.64,1) both',
+        floatSlow: 'floatSlow 9s ease-in-out infinite',
+        logoEntrance: 'logoEntrance 900ms cubic-bezier(.2,.9,.3,1.3) both',
+        fadeUp: 'fadeUp 600ms ease-out both',
+        shimmer: 'shimmer 3.5s linear infinite',
+        lanternSwing: 'lanternSwing 4s ease-in-out infinite',
       },
     },
   },

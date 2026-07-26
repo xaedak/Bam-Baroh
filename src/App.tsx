@@ -16,7 +16,6 @@ import { AchievementToast } from './components/AchievementToast';
 import { RemoteAchievementBanner } from './components/RemoteAchievementBanner';
 import { useSave } from './state/SaveContext';
 import { MultiplayerProvider, useMultiplayer } from './state/MultiplayerContext';
-import { AuthProvider } from './state/AuthContext';
 
 type Screen =
   | 'menu'
@@ -133,11 +132,9 @@ function AppInner() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <MultiplayerProvider>
-        <AppInner />
-      </MultiplayerProvider>
-    </AuthProvider>
+    <MultiplayerProvider>
+      <AppInner />
+    </MultiplayerProvider>
   );
 }
 
