@@ -164,14 +164,14 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ label, description, icon, checked
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={[
-        'w-14 h-8 rounded-full relative transition-colors flex-shrink-0',
-        checked ? 'bg-betel-500' : 'bg-dusk-600',
+        'w-14 h-8 rounded-full relative transition-colors flex-shrink-0 border',
+        checked ? 'bg-betel-500 border-betel-600' : 'bg-dusk-900 border-cream-100/15',
       ].join(' ')}
     >
       <span
         className={[
-          'absolute top-1 w-6 h-6 rounded-full bg-cream-100 shadow-tile transition-transform',
-          checked ? 'translate-x-7' : 'translate-x-1',
+          'absolute top-1 left-1 w-6 h-6 rounded-full bg-cream-100 shadow-tile transition-transform',
+          checked ? 'translate-x-6' : 'translate-x-0',
         ].join(' ')}
       />
     </button>

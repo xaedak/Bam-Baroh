@@ -1,4 +1,5 @@
 import { getStoredServerUrl } from './socket';
+import { isDiscordActivity, DISCORD_PROXY_BASE } from '../discord/network';
 
 export interface RankInfo {
   name: string;
@@ -29,9 +30,16 @@ interface ApiResult<T> {
   data?: T;
 }
 
+function apiBase(): string {
+  // Inside a Discord Activity, direct requests to an external domain are
+  // blocked by Discord's CSP - everything must go through the mapped proxy
+  // path instead (same origin, no protocol/host of its own).
+  return isDiscordActivity() ? DISCORD_PROXY_BASE : getStoredServerUrl();
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(`${getStoredServerUrl()}${path}`, {
+    const res = await fetch(`${apiBase()}${path}`, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     });
@@ -41,7 +49,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
     }
     return { ok: true, data: json };
   } catch {
-    return { ok: false, error: `Couldn't reach the server at ${getStoredServerUrl()}.` };
+    return {
+      ok: false,
+      error: isDiscordActivity()
+        ? `Couldn't reach the game server through Discord's proxy (${DISCORD_PROXY_BASE}). Check that a matching URL Mapping is set up in the Developer Portal.`
+        : `Couldn't reach the server at ${getStoredServerUrl()}.`,
+    };
   }
 }
 

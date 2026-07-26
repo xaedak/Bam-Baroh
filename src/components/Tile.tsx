@@ -16,7 +16,12 @@ export const Tile: React.FC<TileProps> = React.memo(
     const meta = FOOD_META[tile.type];
     const cellW = 100 / cols;
     const cellH = 100 / rows;
-    const layerOffset = tile.layer * 2.5;
+    // Each layer cascades up-and-to-the-left of the one beneath it, like a
+    // physical stack of tiles — deep enough to clearly read as "this tile is
+    // sitting on top of others", with the shadow growing at the same time so
+    // higher layers visibly lift off the ones underneath.
+    const layerOffset = tile.layer * 7;
+    const shadowDepth = 3 + tile.layer * 2.5;
 
     return (
       <button
@@ -43,14 +48,17 @@ export const Tile: React.FC<TileProps> = React.memo(
             'relative w-full h-full rounded-xl sm:rounded-2xl flex items-center justify-center select-none',
             'text-[20px] sm:text-3xl border-2',
             covered
-              ? 'brightness-[0.42] saturate-50 border-black/20 shadow-tile'
-              : 'shadow-tileup border-white/40 dark:border-white/20',
+              ? 'brightness-[0.55] saturate-50 border-black/30'
+              : 'border-white/40 dark:border-white/20',
             hinted && !covered ? 'animate-hintPulse ring-4 ring-marigold-400' : '',
           ].join(' ')}
           style={{
             background: covered
               ? '#3a3a3a'
               : `linear-gradient(155deg, ${meta.color}, ${meta.color}cc)`,
+            boxShadow: covered
+              ? `0 ${shadowDepth}px 0 rgba(0,0,0,0.35), 0 ${shadowDepth + 4}px ${shadowDepth + 6}px -4px rgba(0,0,0,0.5)`
+              : `0 ${shadowDepth}px 0 rgba(0,0,0,0.3), 0 ${shadowDepth + 6}px ${shadowDepth + 10}px -4px rgba(0,0,0,0.55)`,
           }}
         >
           <span className="drop-shadow-sm" aria-hidden="true">

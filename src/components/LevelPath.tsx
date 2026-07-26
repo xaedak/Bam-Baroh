@@ -9,8 +9,7 @@ interface LevelPathProps {
 
 const ROW_HEIGHT = 108; // vertical spacing between level nodes, px
 const AMPLITUDE = 92; // horizontal sway of the S-curve, px
-const PAGE_SIZE = 60;
-const RENDER_CAP = 3000; // keep the DOM size sane even with "endless" levels
+const CHUNK_SIZE = 30; // levels are grouped into pages of 30 (1-30, 31-60, ...)
 const MILESTONE_EVERY = 10;
 
 function xOffset(index: number): number {
@@ -18,49 +17,50 @@ function xOffset(index: number): number {
 }
 
 export const LevelPath: React.FC<LevelPathProps> = ({ unlockedLevel, levelStars, onPlay }) => {
-  const initialCount = useMemo(
-    () => Math.min(RENDER_CAP, Math.max(PAGE_SIZE, Math.ceil((unlockedLevel + 30) / 20) * 20)),
-    // Only recompute the starting window size once per mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-  const [visibleCount, setVisibleCount] = useState(initialCount);
+  const totalChunks = Math.ceil(Math.min(TOTAL_LEVELS, unlockedLevel + CHUNK_SIZE) / CHUNK_SIZE);
+  const unlockedChunk = Math.floor((unlockedLevel - 1) / CHUNK_SIZE);
+
+  const [chunk, setChunk] = useState(unlockedChunk);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const topSentinelRef = useRef<HTMLDivElement | null>(null);
   const currentNodeRef = useRef<HTMLButtonElement | null>(null);
-  const hasCenteredRef = useRef(false);
+  const lastCenteredChunk = useRef<number | null>(null);
 
-  const levels = useMemo(() => Array.from({ length: visibleCount }, (_, i) => i + 1), [visibleCount]);
+  const chunkStart = chunk * CHUNK_SIZE + 1;
+  const chunkEnd = Math.min(TOTAL_LEVELS, chunkStart + CHUNK_SIZE - 1);
+  const levels = useMemo(
+    () => Array.from({ length: chunkEnd - chunkStart + 1 }, (_, i) => chunkStart + i),
+    [chunkStart, chunkEnd]
+  );
 
-  // Grow the window as the player scrolls further up (toward higher,
-  // not-yet-rendered levels) instead of ever rendering all of TOTAL_LEVELS.
+  // Scroll the current level into view, but ONLY within this component's own
+  // scroll box - never let it escape to the page/window scroll (that was the
+  // bug that made the whole app open scrolled down into the level list
+  // instead of showing the menu on top).
+  const centerOnCurrent = (behavior: ScrollBehavior) => {
+    const container = scrollRef.current;
+    const node = currentNodeRef.current;
+    if (!container || !node) return;
+    const target = node.offsetTop - container.clientHeight / 2 + node.clientHeight / 2;
+    container.scrollTo({ top: Math.max(0, target), behavior });
+  };
+
   useEffect(() => {
-    const node = topSentinelRef.current;
-    const root = scrollRef.current;
-    if (!node || !root) return undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setVisibleCount((v) => Math.min(RENDER_CAP, Math.min(TOTAL_LEVELS, v + PAGE_SIZE)));
-        }
-      },
-      { root, rootMargin: '400px 0px 0px 0px' }
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  // Land on the player's current level on first render, so they aren't
-  // dropped at level 1 every time they open the menu.
-  useEffect(() => {
-    if (hasCenteredRef.current) return;
-    if (!currentNodeRef.current) return;
-    hasCenteredRef.current = true;
-    currentNodeRef.current.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [levels.length]);
+    if (chunk !== unlockedChunk) return; // only auto-land on the player's own chunk
+    if (lastCenteredChunk.current === chunk) return;
+    lastCenteredChunk.current = chunk;
+    // Wait a tick so the node has actually laid out before measuring it.
+    const id = window.requestAnimationFrame(() => centerOnCurrent('auto'));
+    return () => window.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunk, levels.length]);
 
   const zoomToCurrent = () => {
-    currentNodeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (chunk !== unlockedChunk) {
+      setChunk(unlockedChunk);
+      lastCenteredChunk.current = null;
+    } else {
+      centerOnCurrent('smooth');
+    }
   };
 
   const totalStars = useMemo(
@@ -87,9 +87,36 @@ export const LevelPath: React.FC<LevelPathProps> = ({ unlockedLevel, levelStars,
         </button>
       </div>
 
+      {/* Chunk navigator - levels are shown 30 at a time instead of one long
+          endless list, so the board never has to render (or the player
+          scroll through) thousands of nodes at once. */}
+      <div className="flex items-center justify-between gap-2 px-1 mb-2">
+        <button
+          type="button"
+          onClick={() => setChunk((c) => Math.max(0, c - 1))}
+          disabled={chunk === 0}
+          aria-label="Previous levels"
+          className="w-8 h-8 rounded-full bg-dusk-800/80 border border-cream-100/15 flex items-center justify-center text-sm disabled:opacity-30 disabled:cursor-not-allowed active:scale-90 transition-transform"
+        >
+          ‹
+        </button>
+        <p className="font-mono text-[11px] text-cream-200/60">
+          Levels {chunkStart}–{chunkEnd}
+        </p>
+        <button
+          type="button"
+          onClick={() => setChunk((c) => Math.min(totalChunks - 1, c + 1))}
+          disabled={chunk >= totalChunks - 1 || chunkStart > unlockedLevel}
+          aria-label="Next levels"
+          className="w-8 h-8 rounded-full bg-dusk-800/80 border border-cream-100/15 flex items-center justify-center text-sm disabled:opacity-30 disabled:cursor-not-allowed active:scale-90 transition-transform"
+        >
+          ›
+        </button>
+      </div>
+
       <div
         ref={scrollRef}
-        className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden rounded-3xl bg-dusk-700/40 border border-cream-100/10 [scrollbar-width:thin]"
+        className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain rounded-3xl bg-dusk-700/40 border border-cream-100/10 [scrollbar-width:thin]"
       >
         <div
           className="relative flex flex-col-reverse items-center py-10"
@@ -135,7 +162,6 @@ export const LevelPath: React.FC<LevelPathProps> = ({ unlockedLevel, levelStars,
               </div>
             );
           })}
-          <div ref={topSentinelRef} aria-hidden="true" className="h-1 w-full" />
         </div>
       </div>
     </div>

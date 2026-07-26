@@ -218,7 +218,10 @@ export const PlayScreen: React.FC<PlayScreenProps> = ({ level, onExit, onChangeL
       </div>
 
       <main className="relative z-10 flex-1 flex flex-col px-3 pt-3 pb-2 sm:px-6 min-h-0">
-        <div className="relative flex-1 min-h-0 rounded-3xl bg-[#3a2a1c]/60 border-2 border-black/20 shadow-inner overflow-hidden">
+        <div
+          className="relative flex-1 min-h-0 rounded-3xl bg-[#3a2a1c]/60 border-2 border-black/20 shadow-inner overflow-hidden"
+          style={{ padding: `${8 + state.config.layers * 7}px` }}
+        >
           <div
             className="relative w-full h-full mx-auto"
             style={{ maxWidth: `${(state.config.cols / state.config.rows) * 640}px` }}

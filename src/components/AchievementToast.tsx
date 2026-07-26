@@ -113,7 +113,7 @@ export const AchievementToast: React.FC = () => {
         key={current.id}
         role="status"
         aria-live="polite"
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+16px)] left-1/2 -translate-x-1/2 z-[60] w-[calc(100%-2rem)] max-w-sm animate-achievementSlideUp"
+        className="fixed inset-x-0 mx-auto bottom-[calc(env(safe-area-inset-bottom)+16px)] z-[60] w-[calc(100%-2rem)] max-w-sm animate-achievementSlideUp"
       >
         <div
           className={[

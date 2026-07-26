@@ -17,14 +17,26 @@
 //      its Application ID.
 //   3. Set DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET on the *server*
 ///     (server/.env or your host's env vars) to the same app's ID/secret.
-//   4. Under Activities -> URL Mappings, map your root URL to wherever
-//      this app is deployed, per Discord's Activities docs.
+//   4. Under Activities -> URL Mappings, map your root URL ("/") to
+//      wherever this client is deployed, per Discord's Activities docs.
+//   5. ALSO under URL Mappings, add a second mapping (e.g. prefix
+//      "/proxy-server") pointing at the multiplayer server's host (no
+//      protocol, just the domain, e.g. `bam-baroh.onrender.com`). Discord
+//      blocks every direct request to an external domain from inside the
+//      Activity iframe - REST calls and the Socket.IO connection both have
+//      to go through this mapped proxy path instead (see
+//      `discord/network.ts`, `multiplayer/api.ts`, `multiplayer/socket.ts`).
+//      If VITE_DISCORD_PROXY_PREFIX isn't set, the client assumes
+//      "/proxy-server" - keep the Portal mapping and the env var in sync.
 //
 // This can only be exercised for real inside the Discord client itself —
 // it cannot be tested from a plain browser tab or from this sandbox.
 
 import type { Profile } from '../multiplayer/api';
 import { loginWithDiscord } from '../multiplayer/api';
+import { isDiscordActivity } from './network';
+
+export { isDiscordActivity };
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID as string | undefined;
 
@@ -32,13 +44,6 @@ export interface DiscordAuthResult {
   token: string;
   profile: Profile;
   save: unknown | null;
-}
-
-/** True when we appear to be running inside the Discord client as an Activity. */
-export function isDiscordActivity(): boolean {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  return params.has('frame_id') || window.location.hostname.endsWith('.discordsays.com');
 }
 
 let sdkPromise: Promise<DiscordAuthResult | null> | null = null;
