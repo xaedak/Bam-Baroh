@@ -8,10 +8,9 @@ import { mulberry32, seedFromLevel, shuffleWithRng } from './rng';
 // keep level numbers finite for save data / UI purposes; it is never reached
 // in practice.
 export const TOTAL_LEVELS = 999_999;
-// A 4-slot tray (down from 7) means a single wrong dig can overflow you much
-// faster - this is the main lever that makes the game "hard from level one"
-// as requested, independent of board size/stacking.
-export const TRAY_SIZE = 4;
+// Tray capacity - the main lever for how quickly a wrong dig can overflow
+// you, independent of board size/stacking.
+export const TRAY_SIZE = 6;
 
 /**
  * Difficulty scales smoothly and *indefinitely* with level number using an

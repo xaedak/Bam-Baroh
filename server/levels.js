@@ -25,7 +25,7 @@ export const ALL_FOOD_TYPES = [
 export const POWERUP_KINDS = ['wild', 'bomb', 'freeze'];
 export const TOTAL_LEVELS = 999_999;
 // Kept in lockstep with TRAY_SIZE in src/data/levels.ts.
-export const TRAY_SIZE = 4;
+export const TRAY_SIZE = 6;
 const DIFFICULTY_RAMP = 260;
 
 function difficultyProgress(level) {
